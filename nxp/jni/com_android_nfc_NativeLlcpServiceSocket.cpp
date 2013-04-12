@@ -16,7 +16,6 @@
 
 #include <semaphore.h>
 #include <errno.h>
-#include <ScopedLocalRef.h>
 
 #include "com_android_nfc.h"
 
@@ -74,7 +73,7 @@ static jobject com_NativeLlcpServiceSocket_doAccept(JNIEnv *e, jobject o, jint m
    phLibNfc_Llcp_sSocketOptions_t sOptions;
    phNfc_sData_t sWorkingBuffer;
    jfieldID f;   
-   ScopedLocalRef<jclass> clsNativeLlcpSocket(e, NULL);
+   jclass clsNativeLlcpSocket;
    jobject clientSocket = NULL;
    struct nfc_jni_callback_data cb_data;
    phLibNfc_Handle hIncomingSocket, hServerSocket;
@@ -147,7 +146,7 @@ static jobject com_NativeLlcpServiceSocket_doAccept(JNIEnv *e, jobject o, jint m
    }
 
    /* Get NativeConnectionOriented class object */
-   clsNativeLlcpSocket.reset(e->GetObjectClass(clientSocket));
+   clsNativeLlcpSocket = e->GetObjectClass(clientSocket);
    if(e->ExceptionCheck())
    {
       ALOGD("LLCP Socket get class object error");
@@ -155,15 +154,15 @@ static jobject com_NativeLlcpServiceSocket_doAccept(JNIEnv *e, jobject o, jint m
    }
 
    /* Set socket handle */
-   f = e->GetFieldID(clsNativeLlcpSocket.get(), "mHandle", "I");
+   f = e->GetFieldID(clsNativeLlcpSocket, "mHandle", "I");
    e->SetIntField(clientSocket, f,(jint)hIncomingSocket);
 
    /* Set socket MIU */
-   f = e->GetFieldID(clsNativeLlcpSocket.get(), "mLocalMiu", "I");
+   f = e->GetFieldID(clsNativeLlcpSocket, "mLocalMiu", "I");
    e->SetIntField(clientSocket, f,(jint)miu);
 
    /* Set socket RW */
-   f = e->GetFieldID(clsNativeLlcpSocket.get(), "mLocalRw", "I");
+   f = e->GetFieldID(clsNativeLlcpSocket, "mLocalRw", "I");
    e->SetIntField(clientSocket, f,(jint)rw);
 
    TRACE("socket handle 0x%02x: MIU = %d, RW = %d\n",hIncomingSocket, miu, rw);

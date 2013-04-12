@@ -17,7 +17,6 @@
 
 #include <semaphore.h>
 #include <errno.h>
-#include <ScopedLocalRef.h>
 
 #include "com_android_nfc.h"
 
@@ -123,7 +122,7 @@ static jboolean com_android_nfc_NativeP2pDevice_doConnect(JNIEnv *e, jobject o)
     jboolean result = JNI_FALSE;
     struct nfc_jni_callback_data cb_data;
 
-    ScopedLocalRef<jclass> target_cls(e, NULL);
+    jclass target_cls = NULL;
     jobject tag;
     jmethodID ctor;
     jfieldID f;
@@ -165,9 +164,9 @@ static jboolean com_android_nfc_NativeP2pDevice_doConnect(JNIEnv *e, jobject o)
     }
 
     /* Set General Bytes */
-    target_cls.reset(e->GetObjectClass(o));
+    target_cls = e->GetObjectClass(o);
 
-    f = e->GetFieldID(target_cls.get(), "mGeneralBytes", "[B");
+    f = e->GetFieldID(target_cls, "mGeneralBytes", "[B");
 
     TRACE("General Bytes Length = %d", sGeneralBytes.length);
     TRACE("General Bytes =");

@@ -23,7 +23,6 @@
 #include "llcp_defs.h"
 #include "config.h"
 #include "JavaClassConstants.h"
-#include <ScopedLocalRef.h>
 
 using namespace android;
 
@@ -56,6 +55,7 @@ PeerToPeer::PeerToPeer ()
                         | NFA_TECHNOLOGY_MASK_F_ACTIVE),
     mNextJniHandle (1)
 {
+    unsigned long num = 0;
     memset (mServers, 0, sizeof(mServers));
     memset (mClients, 0, sizeof(mClients));
 }
@@ -202,7 +202,9 @@ bool PeerToPeer::registerServer (tJNI_HANDLE jniHandle, const char *serviceName)
 {
     static const char fn [] = "PeerToPeer::registerServer";
     ALOGD ("%s: enter; service name: %s  JNI handle: %u", fn, serviceName, jniHandle);
+    tNFA_STATUS     stat  = NFA_STATUS_OK;
     sp<P2pServer>   pSrv = NULL;
+    UINT8           serverSap = NFA_P2P_ANY_SAP;
 
     mMutex.lock();
     // Check if already registered
@@ -291,14 +293,18 @@ void PeerToPeer::llcpActivatedHandler (nfc_jni_native_data* nat, tNFA_LLCP_ACTIV
 {
     static const char fn [] = "PeerToPeer::llcpActivatedHandler";
     ALOGD ("%s: enter", fn);
+    JNIEnv* e = NULL;
+    jclass tag_cls = NULL;
+    jobject tag = NULL;
+    jmethodID ctor = 0;
+    jfieldID f = 0;
 
     //no longer need to receive NDEF message from a tag
     android::nativeNfcTag_deregisterNdefTypeHandler ();
 
     mRemoteWKS = activated.remote_wks;
 
-    JNIEnv* e = NULL;
-    ScopedAttach attach(nat->vm, &e);
+    nat->vm->AttachCurrentThread (&e, NULL);
     if (e == NULL)
     {
         ALOGE ("%s: jni env is null", fn);
@@ -306,47 +312,57 @@ void PeerToPeer::llcpActivatedHandler (nfc_jni_native_data* nat, tNFA_LLCP_ACTIV
     }
 
     ALOGD ("%s: get object class", fn);
-    ScopedLocalRef<jclass> tag_cls(e, e->GetObjectClass(nat->cached_P2pDevice));
-    if (e->ExceptionCheck()) {
+    tag_cls = e->GetObjectClass (nat->cached_P2pDevice);
+    if (e->ExceptionCheck())
+    {
         e->ExceptionClear();
         ALOGE ("%s: fail get p2p device", fn);
-        return;
+        goto TheEnd;
     }
 
     ALOGD ("%s: instantiate", fn);
     /* New target instance */
-    jmethodID ctor = e->GetMethodID(tag_cls.get(), "<init>", "()V");
-    ScopedLocalRef<jobject> tag(e, e->NewObject(tag_cls.get(), ctor));
+    ctor = e->GetMethodID (tag_cls, "<init>", "()V");
+    tag = e->NewObject (tag_cls, ctor);
 
     /* Set P2P Target mode */
-    jfieldID f = e->GetFieldID(tag_cls.get(), "mMode", "I");
+    f = e->GetFieldID (tag_cls, "mMode", "I");
 
-    if (activated.is_initiator == TRUE) {
+    if (activated.is_initiator == TRUE)
+    {
         ALOGD ("%s: p2p initiator", fn);
-        e->SetIntField(tag.get(), f, (jint) MODE_P2P_INITIATOR);
-    } else {
+        e->SetIntField (tag, f, (jint) MODE_P2P_INITIATOR);
+    }
+    else
+    {
         ALOGD ("%s: p2p target", fn);
-        e->SetIntField(tag.get(), f, (jint) MODE_P2P_TARGET);
+        e->SetIntField (tag, f, (jint) MODE_P2P_TARGET);
     }
 
     /* Set tag handle */
-    f = e->GetFieldID(tag_cls.get(), "mHandle", "I");
-    e->SetIntField(tag.get(), f, (jint) 0x1234); // ?? This handle is not used for anything
+    f = e->GetFieldID (tag_cls, "mHandle", "I");
+    e->SetIntField (tag, f, (jint) 0x1234); // ?? This handle is not used for anything
 
-    if (nat->tag != NULL) {
-        e->DeleteGlobalRef(nat->tag);
+    if (nat->tag != NULL)
+    {
+        e->DeleteGlobalRef (nat->tag);
     }
-    nat->tag = e->NewGlobalRef(tag.get());
+    nat->tag = e->NewGlobalRef (tag);
 
     ALOGD ("%s: notify nfc service", fn);
 
     /* Notify manager that new a P2P device was found */
-    e->CallVoidMethod(nat->manager, android::gCachedNfcManagerNotifyLlcpLinkActivation, tag.get());
-    if (e->ExceptionCheck()) {
+    e->CallVoidMethod (nat->manager, android::gCachedNfcManagerNotifyLlcpLinkActivation, tag);
+    if (e->ExceptionCheck())
+    {
         e->ExceptionClear();
         ALOGE ("%s: fail notify", fn);
     }
 
+    e->DeleteLocalRef (tag);
+
+TheEnd:
+    nat->vm->DetachCurrentThread ();
     ALOGD ("%s: exit", fn);
 }
 
@@ -362,13 +378,13 @@ void PeerToPeer::llcpActivatedHandler (nfc_jni_native_data* nat, tNFA_LLCP_ACTIV
 ** Returns:         None
 **
 *******************************************************************************/
-void PeerToPeer::llcpDeactivatedHandler (nfc_jni_native_data* nat, tNFA_LLCP_DEACTIVATED& /*deactivated*/)
+void PeerToPeer::llcpDeactivatedHandler (nfc_jni_native_data* nat, tNFA_LLCP_DEACTIVATED& deactivated)
 {
     static const char fn [] = "PeerToPeer::llcpDeactivatedHandler";
     ALOGD ("%s: enter", fn);
-
     JNIEnv* e = NULL;
-    ScopedAttach attach(nat->vm, &e);
+
+    nat->vm->AttachCurrentThread (&e, NULL);
     if (e == NULL)
     {
         ALOGE ("%s: jni env is null", fn);
@@ -383,6 +399,8 @@ void PeerToPeer::llcpDeactivatedHandler (nfc_jni_native_data* nat, tNFA_LLCP_DEA
         e->ExceptionClear();
         ALOGE ("%s: fail notify", fn);
     }
+
+    nat->vm->DetachCurrentThread ();
 
     //let the tag-reading code handle NDEF data event
     android::nativeNfcTag_registerNdefTypeHandler ();
@@ -406,6 +424,10 @@ void PeerToPeer::llcpDeactivatedHandler (nfc_jni_native_data* nat, tNFA_LLCP_DEA
 bool PeerToPeer::accept (tJNI_HANDLE serverJniHandle, tJNI_HANDLE connJniHandle, int maxInfoUnit, int recvWindow)
 {
     static const char fn [] = "PeerToPeer::accept";
+    tNFA_STATUS nfaStat = NFA_STATUS_FAILED;
+    sp<NfaConn>     *pConn = NULL;
+    bool        stat = false;
+    int         ii = 0;
     sp<P2pServer> pSrv = NULL;
 
     ALOGD ("%s: enter; server jni handle: %u; conn jni handle: %u; maxInfoUnit: %d; recvWindow: %d", fn,
@@ -543,10 +565,11 @@ bool PeerToPeer::createClient (tJNI_HANDLE jniHandle, UINT16 miu, UINT8 rw)
 void PeerToPeer::removeConn(tJNI_HANDLE jniHandle)
 {
     static const char fn[] = "PeerToPeer::removeConn";
+    int ii = 0, jj = 0;
 
     AutoMutex mutex(mMutex);
     // If the connection is a for a client, delete the client itself
-    for (size_t ii = 0; ii < sMax; ii++)
+    for (ii = 0; ii < sMax; ii++)
     {
         if ((mClients[ii] != NULL) && (mClients[ii]->mClientConn->mJniHandle == jniHandle))
         {
@@ -560,7 +583,7 @@ void PeerToPeer::removeConn(tJNI_HANDLE jniHandle)
     }
 
     // If the connection is for a server, just delete the connection
-    for (size_t ii = 0; ii < sMax; ii++)
+    for (ii = 0; ii < sMax; ii++)
     {
         if (mServers[ii] != NULL)
         {
@@ -758,9 +781,11 @@ sp<P2pClient> PeerToPeer::findClientCon (tNFA_HANDLE nfaConnHandle)
 *******************************************************************************/
 sp<NfaConn> PeerToPeer::findConnection (tNFA_HANDLE nfaConnHandle)
 {
+    int ii = 0, jj = 0;
+
     AutoMutex mutex(mMutex);
     // First, look through all the client control blocks
-    for (size_t ii = 0; ii < sMax; ii++)
+    for (ii = 0; ii < sMax; ii++)
     {
         if ( (mClients[ii] != NULL)
            && (mClients[ii]->mClientConn->mNfaConnHandle == nfaConnHandle) ) {
@@ -769,7 +794,7 @@ sp<NfaConn> PeerToPeer::findConnection (tNFA_HANDLE nfaConnHandle)
     }
 
     // Not found yet. Look through all the server control blocks
-    for (size_t ii = 0; ii < sMax; ii++)
+    for (ii = 0; ii < sMax; ii++)
     {
         if (mServers[ii] != NULL)
         {
@@ -797,9 +822,11 @@ sp<NfaConn> PeerToPeer::findConnection (tNFA_HANDLE nfaConnHandle)
 *******************************************************************************/
 sp<NfaConn> PeerToPeer::findConnection (tJNI_HANDLE jniHandle)
 {
+    int ii = 0, jj = 0;
+
     AutoMutex mutex(mMutex);
     // First, look through all the client control blocks
-    for (size_t ii = 0; ii < sMax; ii++)
+    for (ii = 0; ii < sMax; ii++)
     {
         if ( (mClients[ii] != NULL)
           && (mClients[ii]->mClientConn->mJniHandle == jniHandle) ) {
@@ -808,7 +835,7 @@ sp<NfaConn> PeerToPeer::findConnection (tJNI_HANDLE jniHandle)
     }
 
     // Not found yet. Look through all the server control blocks
-    for (size_t ii = 0; ii < sMax; ii++)
+    for (ii = 0; ii < sMax; ii++)
     {
         if (mServers[ii] != NULL)
         {
@@ -1115,6 +1142,7 @@ void PeerToPeer::handleNfcOnOff (bool isOn)
 {
     static const char fn [] = "PeerToPeer::handleNfcOnOff";
     ALOGD ("%s: enter; is on=%u", fn, isOn);
+    tNFA_STATUS stat = NFA_STATUS_FAILED;
 
     mIsP2pListening = false;            // In both cases, P2P will not be listening
 
@@ -1127,8 +1155,10 @@ void PeerToPeer::handleNfcOnOff (bool isOn)
     }
     else
     {
+        int ii = 0, jj = 0;
+
         // Disconnect through all the clients
-        for (size_t ii = 0; ii < sMax; ii++)
+        for (ii = 0; ii < sMax; ii++)
         {
             if (mClients[ii] != NULL)
             {
@@ -1153,7 +1183,7 @@ void PeerToPeer::handleNfcOnOff (bool isOn)
         } //loop
 
         // Now look through all the server control blocks
-        for (size_t ii = 0; ii < sMax; ii++)
+        for (ii = 0; ii < sMax; ii++)
         {
             if (mServers[ii] != NULL)
             {
@@ -1485,7 +1515,7 @@ void PeerToPeer::nfaClientCallback (tNFA_P2P_EVT p2pEvent, tNFA_P2P_EVT_DATA* ev
 ** Returns:         None
 **
 *******************************************************************************/
-void PeerToPeer::connectionEventHandler (UINT8 event, tNFA_CONN_EVT_DATA* /*eventData*/)
+void PeerToPeer::connectionEventHandler (UINT8 event, tNFA_CONN_EVT_DATA* eventData)
 {
     switch (event)
     {
@@ -1807,3 +1837,4 @@ NfaConn::NfaConn()
     mRemoteRecvWindow (0)
 {
 }
+

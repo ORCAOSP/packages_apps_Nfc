@@ -27,8 +27,6 @@
 #include "PowerSwitch.h"
 #include "JavaClassConstants.h"
 #include "Pn544Interop.h"
-#include <ScopedLocalRef.h>
-#include <ScopedUtfChars.h>
 
 extern "C"
 {
@@ -117,9 +115,13 @@ static bool                 sIsDisabling = false;
 static bool                 sRfEnabled = false; // whether RF discovery is enabled
 static bool                 sSeRfActive = false;  // whether RF with SE is likely active
 static bool                 sP2pActive = false; // whether p2p was last active
+static int                  sConnlessSap = 0;
+static int                  sConnlessLinkMiu = 0;
 static bool                 sAbortConnlessWait = false;
 static bool                 sIsSecElemSelected = false;  //has NFC service selected a sec elem
 static UINT8 *              sOriginalLptdCfg = NULL;
+static UINT8                sNewLptdCfg[LPTD_PARAM_LEN];
+static UINT32               sConfigUpdated = 0;
 #define CONFIG_UPDATE_LPTD          (1 << 0)
 #define CONFIG_UPDATE_TECH_MASK     (1 << 1)
 #define DEFAULT_TECH_MASK           (NFA_TECHNOLOGY_MASK_A \
@@ -505,9 +507,14 @@ static void nfaConnectionCallback (UINT8 connEvent, tNFA_CONN_EVT_DATA* eventDat
 *******************************************************************************/
 static jboolean nfcManager_initNativeStruc (JNIEnv* e, jobject o)
 {
+    nfc_jni_native_data* nat = NULL;
+    jclass cls = NULL;
+    jobject obj = NULL;
+    jfieldID f = 0;
+
     ALOGD ("%s: enter", __FUNCTION__);
 
-    nfc_jni_native_data* nat = (nfc_jni_native_data*)malloc(sizeof(struct nfc_jni_native_data));
+    nat = (nfc_jni_native_data*)malloc(sizeof(struct nfc_jni_native_data));
     if (nat == NULL)
     {
         ALOGE ("%s: fail allocate native data", __FUNCTION__);
@@ -515,50 +522,50 @@ static jboolean nfcManager_initNativeStruc (JNIEnv* e, jobject o)
     }
 
     memset (nat, 0, sizeof(*nat));
-    e->GetJavaVM(&(nat->vm));
-    nat->env_version = e->GetVersion();
-    nat->manager = e->NewGlobalRef(o);
+    e->GetJavaVM (&(nat->vm));
+    nat->env_version = e->GetVersion ();
+    nat->manager = e->NewGlobalRef (o);
 
-    ScopedLocalRef<jclass> cls(e, e->GetObjectClass(o));
-    jfieldID f = e->GetFieldID(cls.get(), "mNative", "I");
-    e->SetIntField(o, f, (jint)nat);
+    cls = e->GetObjectClass (o);
+    f = e->GetFieldID (cls, "mNative", "I");
+    e->SetIntField (o, f, (jint)nat);
 
     /* Initialize native cached references */
-    gCachedNfcManagerNotifyNdefMessageListeners = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifyNdefMessageListeners = e->GetMethodID (cls,
             "notifyNdefMessageListeners", "(Lcom/android/nfc/dhimpl/NativeNfcTag;)V");
-    gCachedNfcManagerNotifyTransactionListeners = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifyTransactionListeners = e->GetMethodID (cls,
             "notifyTransactionListeners", "([B)V");
-    gCachedNfcManagerNotifyLlcpLinkActivation = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifyLlcpLinkActivation = e->GetMethodID (cls,
             "notifyLlcpLinkActivation", "(Lcom/android/nfc/dhimpl/NativeP2pDevice;)V");
-    gCachedNfcManagerNotifyLlcpLinkDeactivated = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifyLlcpLinkDeactivated = e->GetMethodID (cls,
             "notifyLlcpLinkDeactivated", "(Lcom/android/nfc/dhimpl/NativeP2pDevice;)V");
-    sCachedNfcManagerNotifyTargetDeselected = e->GetMethodID(cls.get(),
+    sCachedNfcManagerNotifyTargetDeselected = e->GetMethodID (cls,
             "notifyTargetDeselected","()V");
-    gCachedNfcManagerNotifySeFieldActivated = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifySeFieldActivated = e->GetMethodID (cls,
             "notifySeFieldActivated", "()V");
-    gCachedNfcManagerNotifySeFieldDeactivated = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifySeFieldDeactivated = e->GetMethodID (cls,
             "notifySeFieldDeactivated", "()V");
-    gCachedNfcManagerNotifySeListenActivated = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifySeListenActivated = e->GetMethodID (cls,
             "notifySeListenActivated", "()V");
-    gCachedNfcManagerNotifySeListenDeactivated = e->GetMethodID(cls.get(),
+    gCachedNfcManagerNotifySeListenDeactivated = e->GetMethodID (cls,
             "notifySeListenDeactivated", "()V");
 
-    sCachedNfcManagerNotifySeApduReceived = e->GetMethodID(cls.get(),
+    sCachedNfcManagerNotifySeApduReceived = e->GetMethodID(cls,
             "notifySeApduReceived", "([B)V");
 
-    sCachedNfcManagerNotifySeMifareAccess = e->GetMethodID(cls.get(),
+    sCachedNfcManagerNotifySeMifareAccess = e->GetMethodID(cls,
             "notifySeMifareAccess", "([B)V");
 
-    sCachedNfcManagerNotifySeEmvCardRemoval =  e->GetMethodID(cls.get(),
+    sCachedNfcManagerNotifySeEmvCardRemoval =  e->GetMethodID(cls,
             "notifySeEmvCardRemoval", "()V");
 
-    if (nfc_jni_cache_object(e, gNativeNfcTagClassName, &(nat->cached_NfcTag)) == -1)
+    if (nfc_jni_cache_object(e,gNativeNfcTagClassName, &(nat->cached_NfcTag)) == -1)
     {
         ALOGE ("%s: fail cache NativeNfcTag", __FUNCTION__);
         return JNI_FALSE;
     }
 
-    if (nfc_jni_cache_object(e, gNativeP2pDeviceClassName, &(nat->cached_P2pDevice)) == -1)
+    if (nfc_jni_cache_object(e,gNativeP2pDeviceClassName, &(nat->cached_P2pDevice)) == -1)
     {
         ALOGE ("%s: fail cache NativeP2pDevice", __FUNCTION__);
         return JNI_FALSE;
@@ -877,7 +884,7 @@ static void nfcManager_enableDiscovery (JNIEnv* e, jobject o)
 ** Returns:         None
 **
 *******************************************************************************/
-void nfcManager_disableDiscovery (JNIEnv*, jobject)
+void nfcManager_disableDiscovery (JNIEnv* e, jobject o)
 {
     tNFA_STATUS status = NFA_STATUS_OK;
     ALOGD ("%s: enter;", __FUNCTION__);
@@ -924,26 +931,35 @@ TheEnd:
 ** Returns          -1 on failure, 0 on success
 **
 *******************************************************************************/
-static int nfc_jni_cache_object_local (JNIEnv *e, const char *className, jobject *cachedObj)
+int nfc_jni_cache_object_local (JNIEnv *e, const char *className, jobject *cachedObj)
 {
-    ScopedLocalRef<jclass> cls(e, e->FindClass(className));
-    if(cls.get() == NULL) {
+    jclass cls = NULL;
+    jobject obj = NULL;
+    jmethodID ctor = 0;
+
+    cls = e->FindClass (className);
+    if(cls == NULL)
+    {
         ALOGE ("%s: find class error", __FUNCTION__);
         return -1;
     }
 
-    jmethodID ctor = e->GetMethodID(cls.get(), "<init>", "()V");
-    jobject obj = e->NewObject(cls.get(), ctor);
-    if (obj == NULL) {
+    ctor = e->GetMethodID (cls, "<init>", "()V");
+    obj = e->NewObject (cls, ctor);
+    if (obj == NULL)
+    {
        ALOGE ("%s: create object error", __FUNCTION__);
        return -1;
     }
 
-    *cachedObj = obj;
-    if (*cachedObj == NULL) {
+    *cachedObj = e->NewLocalRef (obj);
+    if (*cachedObj == NULL)
+    {
+        e->DeleteLocalRef (obj);
         ALOGE ("%s: global ref error", __FUNCTION__);
         return -1;
     }
+    e->DeleteLocalRef (obj);
     return 0;
 }
 
@@ -964,16 +980,20 @@ static int nfc_jni_cache_object_local (JNIEnv *e, const char *className, jobject
 ** Returns:         NativeLlcpServiceSocket Java object.
 **
 *******************************************************************************/
-static jobject nfcManager_doCreateLlcpServiceSocket (JNIEnv* e, jobject, jint nSap, jstring sn, jint miu, jint rw, jint linearBufferLength)
+static jobject nfcManager_doCreateLlcpServiceSocket (JNIEnv* e, jobject o, jint nSap, jstring sn, jint miu, jint rw, jint linearBufferLength)
 {
+    bool        stat = false;
+    jobject     serviceSocket = NULL;
+    jclass      clsNativeLlcpServiceSocket = NULL;
+    jfieldID    f = 0;
     PeerToPeer::tJNI_HANDLE jniHandle = PeerToPeer::getInstance().getNewJniHandle ();
+    const char* serviceName = e->GetStringUTFChars (sn, JNI_FALSE); //convert jstring, which is unicode, into char*
+    std::string serviceName2 (serviceName);
 
-    ScopedUtfChars serviceName(e, sn);
-
-    ALOGD ("%s: enter: sap=%i; name=%s; miu=%i; rw=%i; buffLen=%i", __FUNCTION__, nSap, serviceName.c_str(), miu, rw, linearBufferLength);
+    e->ReleaseStringUTFChars (sn, serviceName); //free the string
+    ALOGD ("%s: enter: sap=%i; name=%s; miu=%i; rw=%i; buffLen=%i", __FUNCTION__, nSap, serviceName2.c_str(), miu, rw, linearBufferLength);
 
     /* Create new NativeLlcpServiceSocket object */
-    jobject serviceSocket = NULL;
     if (nfc_jni_cache_object(e, gNativeLlcpServiceSocketClassName, &(serviceSocket)) == -1)
     {
         ALOGE ("%s: Llcp socket object creation error", __FUNCTION__);
@@ -981,7 +1001,7 @@ static jobject nfcManager_doCreateLlcpServiceSocket (JNIEnv* e, jobject, jint nS
     }
 
     /* Get NativeLlcpServiceSocket class object */
-    ScopedLocalRef<jclass> clsNativeLlcpServiceSocket(e, e->GetObjectClass(serviceSocket));
+    clsNativeLlcpServiceSocket = e->GetObjectClass (serviceSocket);
     if (e->ExceptionCheck())
     {
         e->ExceptionClear();
@@ -989,32 +1009,30 @@ static jobject nfcManager_doCreateLlcpServiceSocket (JNIEnv* e, jobject, jint nS
         return NULL;
     }
 
-    if (!PeerToPeer::getInstance().registerServer (jniHandle, serviceName.c_str()))
+    if (!PeerToPeer::getInstance().registerServer (jniHandle, serviceName2.c_str()))
     {
         ALOGE("%s: RegisterServer error", __FUNCTION__);
         return NULL;
     }
 
-    jfieldID f;
-
     /* Set socket handle to be the same as the NfaHandle*/
-    f = e->GetFieldID(clsNativeLlcpServiceSocket.get(), "mHandle", "I");
-    e->SetIntField(serviceSocket, f, (jint) jniHandle);
+    f = e->GetFieldID (clsNativeLlcpServiceSocket, "mHandle", "I");
+    e->SetIntField (serviceSocket, f, (jint) jniHandle);
     ALOGD ("%s: socket Handle = 0x%X", __FUNCTION__, jniHandle);
 
     /* Set socket linear buffer length */
-    f = e->GetFieldID(clsNativeLlcpServiceSocket.get(), "mLocalLinearBufferLength", "I");
-    e->SetIntField(serviceSocket, f,(jint)linearBufferLength);
+    f = e->GetFieldID (clsNativeLlcpServiceSocket, "mLocalLinearBufferLength", "I");
+    e->SetIntField (serviceSocket, f,(jint)linearBufferLength);
     ALOGD ("%s: buffer length = %d", __FUNCTION__, linearBufferLength);
 
     /* Set socket MIU */
-    f = e->GetFieldID(clsNativeLlcpServiceSocket.get(), "mLocalMiu", "I");
-    e->SetIntField(serviceSocket, f,(jint)miu);
+    f = e->GetFieldID (clsNativeLlcpServiceSocket, "mLocalMiu", "I");
+    e->SetIntField (serviceSocket, f,(jint)miu);
     ALOGD ("%s: MIU = %d", __FUNCTION__, miu);
 
     /* Set socket RW */
-    f = e->GetFieldID(clsNativeLlcpServiceSocket.get(), "mLocalRw", "I");
-    e->SetIntField(serviceSocket, f,(jint)rw);
+    f = e->GetFieldID (clsNativeLlcpServiceSocket, "mLocalRw", "I");
+    e->SetIntField (serviceSocket, f,(jint)rw);
     ALOGD ("%s:  RW = %d", __FUNCTION__, rw);
 
     sLastError = 0;
@@ -1034,7 +1052,7 @@ static jobject nfcManager_doCreateLlcpServiceSocket (JNIEnv* e, jobject, jint nS
 ** Returns:         Last error code.
 **
 *******************************************************************************/
-static jint nfcManager_doGetLastError(JNIEnv*, jobject)
+static jint nfcManager_doGetLastError(JNIEnv* e, jobject o)
 {
     ALOGD ("%s: last error=%i", __FUNCTION__, sLastError);
     return sLastError;
@@ -1052,7 +1070,7 @@ static jint nfcManager_doGetLastError(JNIEnv*, jobject)
 ** Returns:         True if ok.
 **
 *******************************************************************************/
-static jboolean nfcManager_doDeinitialize (JNIEnv*, jobject)
+static jboolean nfcManager_doDeinitialize (JNIEnv* e, jobject o)
 {
     ALOGD ("%s: enter", __FUNCTION__);
 
@@ -1113,48 +1131,50 @@ static jboolean nfcManager_doDeinitialize (JNIEnv*, jobject)
 ** Returns:         NativeLlcpSocket Java object.
 **
 *******************************************************************************/
-static jobject nfcManager_doCreateLlcpSocket (JNIEnv* e, jobject, jint nSap, jint miu, jint rw, jint linearBufferLength)
+static jobject nfcManager_doCreateLlcpSocket (JNIEnv* e, jobject o, jint nSap, jint miu, jint rw, jint linearBufferLength)
 {
     ALOGD ("%s: enter; sap=%d; miu=%d; rw=%d; buffer len=%d", __FUNCTION__, nSap, miu, rw, linearBufferLength);
-
+    jobject clientSocket = NULL;
+    jclass clsNativeLlcpSocket;
+    jfieldID f;
     PeerToPeer::tJNI_HANDLE jniHandle = PeerToPeer::getInstance().getNewJniHandle ();
-    bool stat = PeerToPeer::getInstance().createClient (jniHandle, miu, rw);
+    bool stat = false;
+
+    stat = PeerToPeer::getInstance().createClient (jniHandle, miu, rw);
 
     /* Create new NativeLlcpSocket object */
-    jobject clientSocket = NULL;
     if (nfc_jni_cache_object_local(e, gNativeLlcpSocketClassName, &(clientSocket)) == -1)
     {
         ALOGE ("%s: fail Llcp socket creation", __FUNCTION__);
-        return clientSocket;
+        goto TheEnd;
     }
 
     /* Get NativeConnectionless class object */
-    ScopedLocalRef<jclass> clsNativeLlcpSocket(e, e->GetObjectClass(clientSocket));
+    clsNativeLlcpSocket = e->GetObjectClass (clientSocket);
     if (e->ExceptionCheck())
     {
         e->ExceptionClear();
         ALOGE ("%s: fail get class object", __FUNCTION__);
-        return clientSocket;
+        goto TheEnd;
     }
 
-    jfieldID f;
-
     /* Set socket SAP */
-    f = e->GetFieldID (clsNativeLlcpSocket.get(), "mSap", "I");
+    f = e->GetFieldID (clsNativeLlcpSocket, "mSap", "I");
     e->SetIntField (clientSocket, f, (jint) nSap);
 
     /* Set socket handle */
-    f = e->GetFieldID (clsNativeLlcpSocket.get(), "mHandle", "I");
+    f = e->GetFieldID (clsNativeLlcpSocket, "mHandle", "I");
     e->SetIntField (clientSocket, f, (jint) jniHandle);
 
     /* Set socket MIU */
-    f = e->GetFieldID (clsNativeLlcpSocket.get(), "mLocalMiu", "I");
+    f = e->GetFieldID (clsNativeLlcpSocket, "mLocalMiu", "I");
     e->SetIntField (clientSocket, f, (jint) miu);
 
     /* Set socket RW */
-    f = e->GetFieldID (clsNativeLlcpSocket.get(), "mLocalRw", "I");
+    f = e->GetFieldID (clsNativeLlcpSocket, "mLocalRw", "I");
     e->SetIntField (clientSocket, f, (jint) rw);
 
+TheEnd:
     ALOGD ("%s: exit", __FUNCTION__);
     return clientSocket;
 }
@@ -1173,7 +1193,7 @@ static jobject nfcManager_doCreateLlcpSocket (JNIEnv* e, jobject, jint nSap, jin
 ** Returns:         NativeLlcpConnectionlessSocket Java object.
 **
 *******************************************************************************/
-static jobject nfcManager_doCreateLlcpConnectionlessSocket (JNIEnv *, jobject, jint nSap, jstring /*sn*/)
+static jobject nfcManager_doCreateLlcpConnectionlessSocket (JNIEnv *e, jobject o, jint nSap, jstring sn)
 {
     ALOGD ("%s: nSap=0x%X", __FUNCTION__, nSap);
     return NULL;
@@ -1191,7 +1211,7 @@ static jobject nfcManager_doCreateLlcpConnectionlessSocket (JNIEnv *, jobject, j
 ** Returns:         List of secure element handles.
 **
 *******************************************************************************/
-static jintArray nfcManager_doGetSecureElementList(JNIEnv* e, jobject)
+static jintArray nfcManager_doGetSecureElementList(JNIEnv *e, jobject o)
 {
     ALOGD ("%s", __FUNCTION__);
     return SecureElement::getInstance().getListOfEeHandles (e);
@@ -1209,7 +1229,7 @@ static jintArray nfcManager_doGetSecureElementList(JNIEnv* e, jobject)
 ** Returns:         None
 **
 *******************************************************************************/
-static void nfcManager_doSelectSecureElement(JNIEnv*, jobject)
+static void nfcManager_doSelectSecureElement(JNIEnv *e, jobject o)
 {
     ALOGD ("%s: enter", __FUNCTION__);
     bool stat = true;
@@ -1252,7 +1272,7 @@ TheEnd:
 ** Returns:         None
 **
 *******************************************************************************/
-static void nfcManager_doDeselectSecureElement(JNIEnv*, jobject)
+static void nfcManager_doDeselectSecureElement(JNIEnv *e, jobject o)
 {
     ALOGD ("%s: enter", __FUNCTION__);
     bool stat = false;
@@ -1342,7 +1362,7 @@ static bool isListenMode(tNFA_ACTIVATED& activated)
 ** Returns:         True
 **
 *******************************************************************************/
-static jboolean nfcManager_doCheckLlcp(JNIEnv*, jobject)
+static jboolean nfcManager_doCheckLlcp(JNIEnv *e, jobject o)
 {
     ALOGD("%s", __FUNCTION__);
     return JNI_TRUE;
@@ -1358,7 +1378,7 @@ static jboolean nfcManager_doCheckLlcp(JNIEnv*, jobject)
 ** Returns:         True
 **
 *******************************************************************************/
-static jboolean nfcManager_doActivateLlcp(JNIEnv*, jobject)
+static jboolean nfcManager_doActivateLlcp(JNIEnv *e, jobject o)
 {
     ALOGD("%s", __FUNCTION__);
     return JNI_TRUE;
@@ -1374,7 +1394,7 @@ static jboolean nfcManager_doActivateLlcp(JNIEnv*, jobject)
 ** Returns:         None
 **
 *******************************************************************************/
-static void nfcManager_doAbort(JNIEnv*, jobject)
+static void nfcManager_doAbort(JNIEnv *e, jobject o)
 {
     ALOGE("%s: abort()", __FUNCTION__);
     abort();
@@ -1390,7 +1410,7 @@ static void nfcManager_doAbort(JNIEnv*, jobject)
 ** Returns:         True
 **
 *******************************************************************************/
-static jboolean nfcManager_doDownload(JNIEnv*, jobject)
+static jboolean nfcManager_doDownload(JNIEnv *e, jobject o)
 {
     ALOGD("%s", __FUNCTION__);
     return JNI_TRUE;
@@ -1406,7 +1426,7 @@ static jboolean nfcManager_doDownload(JNIEnv*, jobject)
 ** Returns:         None
 **
 *******************************************************************************/
-static void nfcManager_doResetTimeouts(JNIEnv*, jobject)
+static void nfcManager_doResetTimeouts(JNIEnv *e, jobject o)
 {
     ALOGD ("%s: %d millisec", __FUNCTION__, DEFAULT_GENERAL_TRANS_TIMEOUT);
     gGeneralTransceiveTimeout = DEFAULT_GENERAL_TRANS_TIMEOUT;
@@ -1425,7 +1445,7 @@ static void nfcManager_doResetTimeouts(JNIEnv*, jobject)
 ** Returns:         True if ok.
 **
 *******************************************************************************/
-static bool nfcManager_doSetTimeout(JNIEnv*, jobject, jint /*tech*/, jint timeout)
+static bool nfcManager_doSetTimeout(JNIEnv *e, jobject o, jint tech, jint timeout)
 {
     if (timeout <= 0)
     {
@@ -1451,7 +1471,7 @@ static bool nfcManager_doSetTimeout(JNIEnv*, jobject, jint /*tech*/, jint timeou
 ** Returns:         Timeout value.
 **
 *******************************************************************************/
-static jint nfcManager_doGetTimeout(JNIEnv*, jobject, jint /*tech*/)
+static jint nfcManager_doGetTimeout(JNIEnv *e, jobject o, jint tech)
 {
     ALOGD ("%s: timeout=%d", __FUNCTION__, gGeneralTransceiveTimeout);
     return gGeneralTransceiveTimeout;
@@ -1469,7 +1489,7 @@ static jint nfcManager_doGetTimeout(JNIEnv*, jobject, jint /*tech*/)
 ** Returns:         Text dump.
 **
 *******************************************************************************/
-static jstring nfcManager_doDump(JNIEnv* e, jobject)
+static jstring nfcManager_doDump(JNIEnv *e, jobject o)
 {
     char buffer[100];
     snprintf(buffer, sizeof(buffer), "libnfc llc error_count=%u", /*libnfc_llc_error_count*/ 0);
@@ -1521,7 +1541,7 @@ static void nfcManager_doSetP2pInitiatorModes (JNIEnv *e, jobject o, jint modes)
 ** Returns:         None.
 **
 *******************************************************************************/
-static void nfcManager_doSetP2pTargetModes (JNIEnv*, jobject, jint modes)
+static void nfcManager_doSetP2pTargetModes (JNIEnv *e, jobject o, jint modes)
 {
     ALOGD ("%s: modes=0x%X", __FUNCTION__, modes);
     // Map in the right modes

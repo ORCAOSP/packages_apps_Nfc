@@ -15,7 +15,6 @@
  */
 #include "NfcJniUtil.h"
 #include <errno.h>
-#include <ScopedLocalRef.h>
 
 
 /*******************************************************************************
@@ -29,12 +28,10 @@
 ** Returns:         JNI version.
 **
 *******************************************************************************/
-jint JNI_OnLoad (JavaVM* jvm, void*)
+jint JNI_OnLoad (JavaVM *jvm, void *reserved)
 {
     ALOGD ("%s: enter", __FUNCTION__);
     JNIEnv *e = NULL;
-
-    ALOGI("NFC Service: loading nci JNI");
 
     // Check JNI version
     if (jvm->GetEnv ((void **) &e, JNI_VERSION_1_6))
@@ -74,24 +71,33 @@ namespace android
 *******************************************************************************/
 int nfc_jni_cache_object (JNIEnv *e, const char *className, jobject *cachedObj)
 {
-    ScopedLocalRef<jclass> cls(e, e->FindClass(className));
-    if (cls.get() == NULL) {
-        ALOGE("%s: find class error", __FUNCTION__);
+    jclass cls = NULL;
+    jobject obj = NULL;
+    jmethodID ctor = 0;
+
+    cls = e->FindClass (className);
+    if(cls == NULL)
+    {
+        ALOGE ("%s: find class error", __FUNCTION__);
         return -1;
     }
 
-    jmethodID ctor = e->GetMethodID(cls.get(), "<init>", "()V");
-    ScopedLocalRef<jobject> obj(e, e->NewObject(cls.get(), ctor));
-    if (obj.get() == NULL) {
-       ALOGE("%s: create object error", __FUNCTION__);
+    ctor = e->GetMethodID (cls, "<init>", "()V");
+    obj = e->NewObject (cls, ctor);
+    if (obj == NULL)
+    {
+       ALOGE ("%s: create object error", __FUNCTION__);
        return -1;
     }
 
-    *cachedObj = e->NewGlobalRef(obj.get());
-    if (*cachedObj == NULL) {
-        ALOGE("%s: global ref error", __FUNCTION__);
+    *cachedObj = e->NewGlobalRef (obj);
+    if (*cachedObj == NULL)
+    {
+        e->DeleteLocalRef (obj);
+        ALOGE ("%s: global ref error", __FUNCTION__);
         return -1;
     }
+    e->DeleteLocalRef (obj);
     return 0;
 }
 
@@ -109,9 +115,12 @@ int nfc_jni_cache_object (JNIEnv *e, const char *className, jobject *cachedObj)
 *******************************************************************************/
 int nfc_jni_get_nfc_socket_handle (JNIEnv *e, jobject o)
 {
-    ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-    jfieldID f = e->GetFieldID(c.get(), "mHandle", "I");
-    return e->GetIntField(o, f);
+    jclass c = NULL;
+    jfieldID f = 0;
+
+    c = e->GetObjectClass (o);
+    f = e->GetFieldID (c, "mHandle", "I");
+    return e->GetIntField (o, f);
 }
 
 
@@ -128,10 +137,13 @@ int nfc_jni_get_nfc_socket_handle (JNIEnv *e, jobject o)
 *******************************************************************************/
 struct nfc_jni_native_data* nfc_jni_get_nat(JNIEnv *e, jobject o)
 {
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mNative", "I");
+   jclass c = NULL;
+   jfieldID f = 0;
+
    /* Retrieve native structure address */
-   return (struct nfc_jni_native_data*) e->GetIntField(o, f);
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mNative", "I");
+   return (struct nfc_jni_native_data*)e->GetIntField(o, f);
 }
 
 

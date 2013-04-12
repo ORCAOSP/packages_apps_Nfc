@@ -20,7 +20,6 @@
 #include "com_android_nfc.h"
 #include "com_android_nfc_list.h"
 #include "phLibNfcStatus.h"
-#include <ScopedLocalRef.h>
 
 /*
  * JNI Initialization
@@ -29,7 +28,7 @@ jint JNI_OnLoad(JavaVM *jvm, void *reserved)
 {
    JNIEnv *e;
 
-   ALOGI("NFC Service: loading nxp JNI");
+   ALOGD("NFC Service : loading JNI\n");
 
    // Check JNI version
    if(jvm->GetEnv((void **)&e, JNI_VERSION_1_6))
@@ -129,24 +128,36 @@ void nfc_cb_data_releaseAll()
 int nfc_jni_cache_object(JNIEnv *e, const char *clsname,
    jobject *cached_obj)
 {
-   ScopedLocalRef<jclass> cls(e, e->FindClass(clsname));
-   if (cls.get() == NULL) {
+   jclass cls;
+   jobject obj;
+   jmethodID ctor;
+
+   cls = e->FindClass(clsname);
+   if(cls == NULL)
+   {
+      return -1;
       ALOGD("Find class error\n");
-      return -1;
    }
 
-   jmethodID ctor = e->GetMethodID(cls.get(), "<init>", "()V");
-   ScopedLocalRef<jobject> obj(e, e->NewObject(cls.get(), ctor));
-   if (obj.get() == NULL) {
+
+   ctor = e->GetMethodID(cls, "<init>", "()V");
+
+   obj = e->NewObject(cls, ctor);
+   if(obj == NULL)
+   {
+      return -1;
       ALOGD("Create object error\n");
-      return -1;
    }
 
-   *cached_obj = e->NewGlobalRef(obj.get());
-   if (*cached_obj == NULL) {
+   *cached_obj = e->NewGlobalRef(obj);
+   if(*cached_obj == NULL)
+   {
+      e->DeleteLocalRef(obj);
       ALOGD("Global ref error\n");
       return -1;
    }
+
+   e->DeleteLocalRef(obj);
 
    return 0;
 }
@@ -154,10 +165,13 @@ int nfc_jni_cache_object(JNIEnv *e, const char *clsname,
 
 struct nfc_jni_native_data* nfc_jni_get_nat(JNIEnv *e, jobject o)
 {
+   jclass c;
+   jfieldID f;
+
    /* Retrieve native structure address */
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mNative", "I");
-   return (struct nfc_jni_native_data*) e->GetIntField(o, f);
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mNative", "I");
+   return (struct nfc_jni_native_data*)e->GetIntField(o, f);
 }
 
 struct nfc_jni_native_data* nfc_jni_get_nat_ext(JNIEnv *e)
@@ -219,39 +233,54 @@ nfc_jni_native_monitor_t* nfc_jni_init_monitor(void)
 }
 
    return nfc_jni_native_monitor;
-}
+} 
 
 nfc_jni_native_monitor_t* nfc_jni_get_monitor(void)
 {
    return nfc_jni_native_monitor;
 }
-
+   
 
 phLibNfc_Handle nfc_jni_get_p2p_device_handle(JNIEnv *e, jobject o)
 {
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mHandle", "I");
+   jclass c;
+   jfieldID f;
+
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mHandle", "I");
+
    return e->GetIntField(o, f);
 }
 
 jshort nfc_jni_get_p2p_device_mode(JNIEnv *e, jobject o)
 {
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mMode", "S");
+   jclass c;
+   jfieldID f;
+
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mMode", "S");
+
    return e->GetShortField(o, f);
 }
 
 
 int nfc_jni_get_connected_tech_index(JNIEnv *e, jobject o)
 {
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mConnectedTechIndex", "I");
+
+   jclass c;
+   jfieldID f;
+
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mConnectedTechIndex", "I");
+
    return e->GetIntField(o, f);
 
 }
 
 jint nfc_jni_get_connected_technology(JNIEnv *e, jobject o)
 {
+   jclass c;
+   jfieldID f;
    int connectedTech = -1;
 
    int connectedTechIndex = nfc_jni_get_connected_tech_index(e,o);
@@ -272,43 +301,62 @@ jint nfc_jni_get_connected_technology(JNIEnv *e, jobject o)
 
 jint nfc_jni_get_connected_technology_libnfc_type(JNIEnv *e, jobject o)
 {
+   jclass c;
+   jfieldID f;
    jint connectedLibNfcType = -1;
 
    int connectedTechIndex = nfc_jni_get_connected_tech_index(e,o);
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mTechLibNfcTypes", "[I");
-   ScopedLocalRef<jintArray> libNfcTypes(e, (jintArray) e->GetObjectField(o, f));
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mTechLibNfcTypes", "[I");
+   jintArray libNfcTypes =  (jintArray) e->GetObjectField(o, f);
 
-   if ((connectedTechIndex != -1) && (libNfcTypes.get() != NULL) &&
-           (connectedTechIndex < e->GetArrayLength(libNfcTypes.get()))) {
-       jint* types = e->GetIntArrayElements(libNfcTypes.get(), 0);
+   if ((connectedTechIndex != -1) && (libNfcTypes != NULL) &&
+           (connectedTechIndex < e->GetArrayLength(libNfcTypes))) {
+       jint* types = e->GetIntArrayElements(libNfcTypes, 0);
        if (types != NULL) {
            connectedLibNfcType = types[connectedTechIndex];
-           e->ReleaseIntArrayElements(libNfcTypes.get(), types, JNI_ABORT);
+           e->ReleaseIntArrayElements(libNfcTypes, types, JNI_ABORT);
        }
    }
    return connectedLibNfcType;
+
 }
 
 phLibNfc_Handle nfc_jni_get_connected_handle(JNIEnv *e, jobject o)
 {
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mConnectedHandle", "I");
+   jclass c;
+   jfieldID f;
+
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mConnectedHandle", "I");
+
    return e->GetIntField(o, f);
 }
 
 phLibNfc_Handle nfc_jni_get_nfc_socket_handle(JNIEnv *e, jobject o)
 {
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mHandle", "I");
+   jclass c;
+   jfieldID f;
+
+   c = e->GetObjectClass(o);
+   f = e->GetFieldID(c, "mHandle", "I");
+
    return e->GetIntField(o, f);
 }
 
 jintArray nfc_jni_get_nfc_tag_type(JNIEnv *e, jobject o)
 {
-   ScopedLocalRef<jclass> c(e, e->GetObjectClass(o));
-   jfieldID f = e->GetFieldID(c.get(), "mTechList","[I");
-   return (jintArray) e->GetObjectField(o, f);
+  jclass c;
+  jfieldID f;
+  jintArray techtypes;
+   
+  c = e->GetObjectClass(o);
+  f = e->GetFieldID(c, "mTechList","[I");
+
+  /* Read the techtypes  */
+  techtypes = (jintArray) e->GetObjectField(o, f);
+
+  return techtypes;
 }
 
 
@@ -317,7 +365,7 @@ jintArray nfc_jni_get_nfc_tag_type(JNIEnv *e, jobject o)
 const char* nfc_jni_get_status_name(NFCSTATUS status)
 {
    #define STATUS_ENTRY(status) { status, #status }
-
+ 
    struct status_entry {
       NFCSTATUS   code;
       const char  *name;
@@ -366,7 +414,7 @@ const char* nfc_jni_get_status_name(NFCSTATUS status)
    };
 
    int i = sizeof(sNameTable)/sizeof(status_entry);
-
+ 
    while(i>0)
    {
       i--;
@@ -405,10 +453,9 @@ int addTechIfNeeded(int *techList, int* handleList, int* typeList, int listSize,
 /*
  *  Utility to get a technology tree and a corresponding handle list from a detected tag.
  */
-void nfc_jni_get_technology_tree(JNIEnv* e, phLibNfc_RemoteDevList_t* devList, uint8_t count,
-                                 ScopedLocalRef<jintArray>* techList,
-                                 ScopedLocalRef<jintArray>* handleList,
-                                 ScopedLocalRef<jintArray>* libnfcTypeList)
+void nfc_jni_get_technology_tree(JNIEnv* e, phLibNfc_RemoteDevList_t* devList,
+        uint8_t count, jintArray* techList, jintArray* handleList,
+        jintArray* libnfcTypeList)
 {
    int technologies[MAX_NUM_TECHNOLOGIES];
    int handles[MAX_NUM_TECHNOLOGIES];
@@ -499,18 +546,18 @@ void nfc_jni_get_technology_tree(JNIEnv* e, phLibNfc_RemoteDevList_t* devList, u
 
    // Build the Java arrays
    if (techList != NULL) {
-       techList->reset(e->NewIntArray(index));
-       e->SetIntArrayRegion(techList->get(), 0, index, technologies);
+       *techList = e->NewIntArray(index);
+       e->SetIntArrayRegion(*techList, 0, index, technologies);
    }
 
    if (handleList != NULL) {
-       handleList->reset(e->NewIntArray(index));
-       e->SetIntArrayRegion(handleList->get(), 0, index, handles);
+       *handleList = e->NewIntArray(index);
+       e->SetIntArrayRegion(*handleList, 0, index, handles);
    }
 
    if (libnfcTypeList != NULL) {
-       libnfcTypeList->reset(e->NewIntArray(index));
-       e->SetIntArrayRegion(libnfcTypeList->get(), 0, index, libnfctypes);
+       *libnfcTypeList = e->NewIntArray(index);
+       e->SetIntArrayRegion(*libnfcTypeList, 0, index, libnfctypes);
    }
 }
 

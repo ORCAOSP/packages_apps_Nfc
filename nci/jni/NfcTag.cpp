@@ -20,9 +20,6 @@
 #include "OverrideLog.h"
 #include "NfcTag.h"
 #include "JavaClassConstants.h"
-#include <ScopedLocalRef.h>
-#include <ScopedPrimitiveArray.h>
-
 extern "C"
 {
     #include "rw_int.h"
@@ -494,53 +491,63 @@ void NfcTag::createNativeNfcTag (tNFA_ACTIVATED& activationData)
 {
     static const char fn [] = "NfcTag::createNativeNfcTag";
     ALOGD ("%s: enter", fn);
-
     JNIEnv* e = NULL;
-    ScopedAttach attach(mNativeData->vm, &e);
-    if (e == NULL) {
+    jclass tag_cls = NULL;
+    jmethodID ctor = NULL;
+    jobject tag = NULL;
+
+    //acquire a pointer to the Java virtual machine
+    mNativeData->vm->AttachCurrentThread (&e, NULL);
+    if (e == NULL)
+    {
         ALOGE("%s: jni env is null", fn);
-        return;
+        goto TheEnd;
     }
 
-    ScopedLocalRef<jclass> tag_cls(e, e->GetObjectClass(mNativeData->cached_NfcTag));
-    if (e->ExceptionCheck()) {
+    tag_cls = e->GetObjectClass (mNativeData->cached_NfcTag);
+    if (e->ExceptionCheck())
+    {
         e->ExceptionClear();
         ALOGE("%s: failed to get class", fn);
-        return;
+        goto TheEnd;
     }
 
     //create a new Java NativeNfcTag object
-    jmethodID ctor = e->GetMethodID(tag_cls.get(), "<init>", "()V");
-    ScopedLocalRef<jobject> tag(e, e->NewObject(tag_cls.get(), ctor));
+    ctor = e->GetMethodID (tag_cls, "<init>", "()V");
+    tag = e->NewObject (tag_cls, ctor);
 
     //fill NativeNfcTag's mProtocols, mTechList, mTechHandles, mTechLibNfcTypes
-    fillNativeNfcTagMembers1(e, tag_cls.get(), tag.get());
+    fillNativeNfcTagMembers1 (e, tag_cls, tag);
 
     //fill NativeNfcTag's members: mHandle, mConnectedTechnology
-    fillNativeNfcTagMembers2(e, tag_cls.get(), tag.get(), activationData);
+    fillNativeNfcTagMembers2 (e, tag_cls, tag, activationData);
 
     //fill NativeNfcTag's members: mTechPollBytes
-    fillNativeNfcTagMembers3(e, tag_cls.get(), tag.get(), activationData);
+    fillNativeNfcTagMembers3 (e, tag_cls, tag, activationData);
 
     //fill NativeNfcTag's members: mTechActBytes
-    fillNativeNfcTagMembers4(e, tag_cls.get(), tag.get(), activationData);
+    fillNativeNfcTagMembers4 (e, tag_cls, tag, activationData);
 
     //fill NativeNfcTag's members: mUid
-    fillNativeNfcTagMembers5(e, tag_cls.get(), tag.get(), activationData);
+    fillNativeNfcTagMembers5 (e, tag_cls, tag, activationData);
 
     if (mNativeData->tag != NULL) {
-        e->DeleteGlobalRef(mNativeData->tag);
+        e->DeleteGlobalRef (mNativeData->tag);
     }
-    mNativeData->tag = e->NewGlobalRef(tag.get());
+    mNativeData->tag = e->NewGlobalRef (tag);
 
     //notify NFC service about this new tag
     ALOGD ("%s: try notify nfc service", fn);
-    e->CallVoidMethod(mNativeData->manager, android::gCachedNfcManagerNotifyNdefMessageListeners, tag.get());
-    if (e->ExceptionCheck()) {
+    e->CallVoidMethod (mNativeData->manager, android::gCachedNfcManagerNotifyNdefMessageListeners, tag);
+    if (e->ExceptionCheck())
+    {
         e->ExceptionClear();
         ALOGE ("%s: fail notify nfc service", fn);
     }
+    e->DeleteLocalRef (tag);
 
+TheEnd:
+    mNativeData->vm->DetachCurrentThread ();
     ALOGD ("%s: exit", fn);
 }
 
@@ -561,35 +568,36 @@ void NfcTag::fillNativeNfcTagMembers1 (JNIEnv* e, jclass tag_cls, jobject tag)
 {
     static const char fn [] = "NfcTag::fillNativeNfcTagMembers1";
     ALOGD ("%s", fn);
-
-    //create objects that represent NativeNfcTag's member variables
-    ScopedLocalRef<jintArray> techList(e, e->NewIntArray(mNumTechList));
-    ScopedLocalRef<jintArray> handleList(e, e->NewIntArray(mNumTechList));
-    ScopedLocalRef<jintArray> typeList(e, e->NewIntArray(mNumTechList));
-
-    {
-        ScopedIntArrayRW technologies(e, techList.get());
-        ScopedIntArrayRW handles(e, handleList.get());
-        ScopedIntArrayRW types(e, typeList.get());
-        for (int i = 0; i < mNumTechList; i++) {
-            mNativeData->tProtocols [i] = mTechLibNfcTypes [i];
-            mNativeData->handles [i] = mTechHandles [i];
-            technologies [i] = mTechList [i];
-            handles [i]      = mTechHandles [i];
-            types [i]        = mTechLibNfcTypes [i];
-        }
-    }
-
     jfieldID f = NULL;
 
-    f = e->GetFieldID(tag_cls, "mTechList", "[I");
-    e->SetObjectField(tag, f, techList.get());
+    //create objects that represent NativeNfcTag's member variables
+    jintArray techList     = e->NewIntArray (mNumTechList);
+    jintArray handleList   = e->NewIntArray (mNumTechList);
+    jintArray typeList     = e->NewIntArray (mNumTechList);
 
-    f = e->GetFieldID(tag_cls, "mTechHandles", "[I");
-    e->SetObjectField(tag, f, handleList.get());
+    jint* technologies = e->GetIntArrayElements (techList,     NULL);
+    jint* handles      = e->GetIntArrayElements (handleList,   NULL);
+    jint* types        = e->GetIntArrayElements (typeList,     NULL);
+    for (int i = 0; i < mNumTechList; i++)
+    {
+        mNativeData->tProtocols [i] = mTechLibNfcTypes [i];
+        mNativeData->handles [i] = mTechHandles [i];
+        technologies [i] = mTechList [i];
+        handles [i]      = mTechHandles [i];
+        types [i]        = mTechLibNfcTypes [i];
+    }
+    e->ReleaseIntArrayElements (techList,     technologies, 0);
+    e->ReleaseIntArrayElements (handleList,   handles,      0);
+    e->ReleaseIntArrayElements (typeList,     types,        0);
 
-    f = e->GetFieldID(tag_cls, "mTechLibNfcTypes", "[I");
-    e->SetObjectField(tag, f, typeList.get());
+    f = e->GetFieldID (tag_cls, "mTechList", "[I");
+    e->SetObjectField (tag, f, techList);
+
+    f = e->GetFieldID (tag_cls, "mTechHandles", "[I");
+    e->SetObjectField (tag, f, handleList);
+
+    f = e->GetFieldID (tag_cls, "mTechLibNfcTypes", "[I");
+    e->SetObjectField (tag, f, typeList);
 }
 
 
@@ -609,12 +617,14 @@ void NfcTag::fillNativeNfcTagMembers1 (JNIEnv* e, jclass tag_cls, jobject tag)
 **
 *******************************************************************************/
 //fill NativeNfcTag's members: mHandle, mConnectedTechnology
-void NfcTag::fillNativeNfcTagMembers2 (JNIEnv* e, jclass tag_cls, jobject tag, tNFA_ACTIVATED& /*activationData*/)
+void NfcTag::fillNativeNfcTagMembers2 (JNIEnv* e, jclass tag_cls, jobject tag, tNFA_ACTIVATED& activationData)
 {
     static const char fn [] = "NfcTag::fillNativeNfcTagMembers2";
     ALOGD ("%s", fn);
-    jfieldID f = e->GetFieldID(tag_cls, "mConnectedTechIndex", "I");
-    e->SetIntField(tag, f, (jint) 0);
+    jfieldID f = NULL;
+
+    f = e->GetFieldID (tag_cls, "mConnectedTechIndex", "I");
+    e->SetIntField (tag, f, (jint) 0);
 }
 
 
@@ -636,9 +646,9 @@ void NfcTag::fillNativeNfcTagMembers2 (JNIEnv* e, jclass tag_cls, jobject tag, t
 void NfcTag::fillNativeNfcTagMembers3 (JNIEnv* e, jclass tag_cls, jobject tag, tNFA_ACTIVATED& activationData)
 {
     static const char fn [] = "NfcTag::fillNativeNfcTagMembers3";
-    ScopedLocalRef<jbyteArray> pollBytes(e, e->NewByteArray(0));
-    ScopedLocalRef<jclass> byteArrayClass(e, e->GetObjectClass(pollBytes.get()));
-    ScopedLocalRef<jobjectArray> techPollBytes(e, e->NewObjectArray(mNumTechList, byteArrayClass.get(), 0));
+    jfieldID f = NULL;
+    jbyteArray pollBytes = e->NewByteArray (0);
+    jobjectArray techPollBytes = e->NewObjectArray (mNumTechList, e->GetObjectClass(pollBytes), 0);
     int len = 0;
 
     for (int i = 0; i < mNumTechList; i++)
@@ -651,8 +661,9 @@ void NfcTag::fillNativeNfcTagMembers3 (JNIEnv* e, jclass tag_cls, jobject tag, t
         case NFC_DISCOVERY_TYPE_LISTEN_A:
         case NFC_DISCOVERY_TYPE_LISTEN_A_ACTIVE:
             ALOGD ("%s: tech A", fn);
-            pollBytes.reset(e->NewByteArray(2));
-            e->SetByteArrayRegion(pollBytes.get(), 0, 2, (jbyte*) mTechParams [i].param.pa.sens_res);
+            pollBytes = e->NewByteArray (2);
+            e->SetByteArrayRegion (pollBytes, 0, 2,
+                    (jbyte*) mTechParams [i].param.pa.sens_res);
             break;
 
         case NFC_DISCOVERY_TYPE_POLL_B:
@@ -669,11 +680,11 @@ void NfcTag::fillNativeNfcTagMembers3 (JNIEnv* e, jclass tag_cls, jobject tag, t
                 ALOGD ("%s: tech B; TARGET_TYPE_ISO14443_3B", fn);
                 len = mTechParams [i].param.pb.sensb_res_len;
                 len = len - 4; //subtract 4 bytes for NFCID0 at byte 2 through 5
-                pollBytes.reset(e->NewByteArray(len));
-                e->SetByteArrayRegion(pollBytes.get(), 0, len, (jbyte*) (mTechParams [i].param.pb.sensb_res+4));
-            } else {
-                pollBytes.reset(e->NewByteArray(0));
+                pollBytes = e->NewByteArray (len);
+                e->SetByteArrayRegion (pollBytes, 0, len, (jbyte*) (mTechParams [i].param.pb.sensb_res+4));
             }
+            else
+                pollBytes = e->NewByteArray (0);
             break;
 
         case NFC_DISCOVERY_TYPE_POLL_F:
@@ -707,9 +718,9 @@ void NfcTag::fillNativeNfcTagMembers3 (JNIEnv* e, jclass tag_cls, jobject tag, t
                     result [9] = (UINT8) systemCode;
                     ALOGD ("%s: tech F; sys code=0x%X 0x%X", fn, result [8], result [9]);
                 }
-                pollBytes.reset(e->NewByteArray(len));
-                e->SetByteArrayRegion(pollBytes.get(), 0, len, (jbyte*) result);
-            }
+                pollBytes = e->NewByteArray (len);
+                e->SetByteArrayRegion (pollBytes, 0, len, (jbyte*) result);
+			}
             break;
 
         case NFC_DISCOVERY_TYPE_POLL_ISO15693:
@@ -720,20 +731,20 @@ void NfcTag::fillNativeNfcTagMembers3 (JNIEnv* e, jclass tag_cls, jobject tag, t
                 //iso 15693 Data Structure Format Identifier (DSF ID): 1 octet
                 //used by public API: NfcV.getDsfId(), NfcV.getResponseFlags();
                 uint8_t data [2]= {activationData.params.i93.afi, activationData.params.i93.dsfid};
-                pollBytes.reset(e->NewByteArray(2));
-                e->SetByteArrayRegion(pollBytes.get(), 0, 2, (jbyte *) data);
+                pollBytes = e->NewByteArray (2);
+                e->SetByteArrayRegion (pollBytes, 0, 2, (jbyte *) data);
             }
             break;
 
         default:
             ALOGE ("%s: tech unknown ????", fn);
-            pollBytes.reset(e->NewByteArray(0));
+            pollBytes = e->NewByteArray(0);
             break;
         } //switch: every type of technology
-        e->SetObjectArrayElement(techPollBytes.get(), i, pollBytes.get());
+        e->SetObjectArrayElement (techPollBytes, i, pollBytes);
     } //for: every technology in the array
-    jfieldID f = e->GetFieldID(tag_cls, "mTechPollBytes", "[[B");
-    e->SetObjectField(tag, f, techPollBytes.get());
+    f = e->GetFieldID (tag_cls, "mTechPollBytes", "[[B");
+    e->SetObjectField (tag, f, techPollBytes);
 }
 
 
@@ -755,9 +766,11 @@ void NfcTag::fillNativeNfcTagMembers3 (JNIEnv* e, jclass tag_cls, jobject tag, t
 void NfcTag::fillNativeNfcTagMembers4 (JNIEnv* e, jclass tag_cls, jobject tag, tNFA_ACTIVATED& activationData)
 {
     static const char fn [] = "NfcTag::fillNativeNfcTagMembers4";
-    ScopedLocalRef<jbyteArray> actBytes(e, e->NewByteArray(0));
-    ScopedLocalRef<jclass> byteArrayClass(e, e->GetObjectClass(actBytes.get()));
-    ScopedLocalRef<jobjectArray> techActBytes(e, e->NewObjectArray(mNumTechList, byteArrayClass.get(), 0));
+    jfieldID f = NULL;
+    jbyteArray actBytes = e->NewByteArray (0);
+    jobjectArray techActBytes = e->NewObjectArray (mNumTechList, e->GetObjectClass(actBytes), 0);
+    jbyteArray uid = NULL;
+    int len = 0;
 
     for (int i = 0; i < mNumTechList; i++)
     {
@@ -767,16 +780,18 @@ void NfcTag::fillNativeNfcTagMembers4 (JNIEnv* e, jclass tag_cls, jobject tag, t
         case NFC_PROTOCOL_T1T:
             {
                 ALOGD ("%s: T1T; tech A", fn);
-                actBytes.reset(e->NewByteArray(1));
-                e->SetByteArrayRegion(actBytes.get(), 0, 1, (jbyte*) &mTechParams [i].param.pa.sel_rsp);
+                actBytes = e->NewByteArray (1);
+                e->SetByteArrayRegion (actBytes, 0, 1,
+                        (jbyte*) &mTechParams [i].param.pa.sel_rsp);
             }
             break;
 
-        case NFC_PROTOCOL_T2T: // TODO: why is this code a duplicate of NFC_PROTOCOL_T1T?
+        case NFC_PROTOCOL_T2T:
             {
                 ALOGD ("%s: T2T; tech A", fn);
-                actBytes.reset(e->NewByteArray(1));
-                e->SetByteArrayRegion(actBytes.get(), 0, 1, (jbyte*) &mTechParams [i].param.pa.sel_rsp);
+                actBytes = e->NewByteArray (1);
+                e->SetByteArrayRegion (actBytes, 0, 1,
+                        (jbyte*) &mTechParams [i].param.pa.sel_rsp);
             }
             break;
 
@@ -784,7 +799,7 @@ void NfcTag::fillNativeNfcTagMembers4 (JNIEnv* e, jclass tag_cls, jobject tag, t
             {
                 ALOGD ("%s: T3T; felica; tech F", fn);
                 //really, there is no data
-                actBytes.reset(e->NewByteArray(0));
+                actBytes = e->NewByteArray (0);
             }
             break;
 
@@ -804,14 +819,14 @@ void NfcTag::fillNativeNfcTagMembers4 (JNIEnv* e, jclass tag_cls, jobject tag, t
                         {
                             tNFC_INTF_PA_ISO_DEP& pa_iso = activationData.activate_ntf.intf_param.intf_param.pa_iso;
                             ALOGD ("%s: T4T; ISO_DEP for tech A; copy historical bytes; len=%u", fn, pa_iso.his_byte_len);
-                            actBytes.reset(e->NewByteArray(pa_iso.his_byte_len));
+                            actBytes = e->NewByteArray (pa_iso.his_byte_len);
                             if (pa_iso.his_byte_len > 0)
-                                e->SetByteArrayRegion(actBytes.get(), 0, pa_iso.his_byte_len, (jbyte*) (pa_iso.his_byte));
+                                e->SetByteArrayRegion (actBytes, 0, pa_iso.his_byte_len, (jbyte*) (pa_iso.his_byte));
                         }
                         else
                         {
                             ALOGE ("%s: T4T; ISO_DEP for tech A; wrong interface=%u", fn, activationData.activate_ntf.intf_param.type);
-                            actBytes.reset(e->NewByteArray(0));
+                            actBytes = e->NewByteArray (0);
                         }
                     }
                     else if ( (mTechParams[i].mode == NFC_DISCOVERY_TYPE_POLL_B) ||
@@ -826,26 +841,26 @@ void NfcTag::fillNativeNfcTagMembers4 (JNIEnv* e, jclass tag_cls, jobject tag, t
                         {
                             tNFC_INTF_PB_ISO_DEP& pb_iso = activationData.activate_ntf.intf_param.intf_param.pb_iso;
                             ALOGD ("%s: T4T; ISO_DEP for tech B; copy response bytes; len=%u", fn, pb_iso.hi_info_len);
-                            actBytes.reset(e->NewByteArray(pb_iso.hi_info_len));
+                            actBytes = e->NewByteArray (pb_iso.hi_info_len);
                             if (pb_iso.hi_info_len > 0)
-                                e->SetByteArrayRegion(actBytes.get(), 0, pb_iso.hi_info_len, (jbyte*) (pb_iso.hi_info));
+                                e->SetByteArrayRegion (actBytes, 0, pb_iso.hi_info_len, (jbyte*) (pb_iso.hi_info));
                         }
                         else
                         {
                             ALOGE ("%s: T4T; ISO_DEP for tech B; wrong interface=%u", fn, activationData.activate_ntf.intf_param.type);
-                            actBytes.reset(e->NewByteArray(0));
+                            actBytes = e->NewByteArray (0);
                         }
                     }
                 }
                 else if (mTechList [i] == TARGET_TYPE_ISO14443_3A) //is TagTechnology.NFC_A by Java API
                 {
                     ALOGD ("%s: T4T; tech A", fn);
-                    actBytes.reset(e->NewByteArray(1));
-                    e->SetByteArrayRegion(actBytes.get(), 0, 1, (jbyte*) &mTechParams [i].param.pa.sel_rsp);
+                    actBytes = e->NewByteArray (1);
+                    e->SetByteArrayRegion (actBytes, 0, 1, (jbyte*) &mTechParams [i].param.pa.sel_rsp);
                 }
                 else
                 {
-                    actBytes.reset(e->NewByteArray(0));
+                    actBytes = e->NewByteArray (0);
                 }
             } //case NFC_PROTOCOL_ISO_DEP: //t4t
             break;
@@ -857,20 +872,20 @@ void NfcTag::fillNativeNfcTagMembers4 (JNIEnv* e, jclass tag_cls, jobject tag, t
                 //iso 15693 Data Structure Format Identifier (DSF ID): 1 octet
                 //used by public API: NfcV.getDsfId(), NfcV.getResponseFlags();
                 uint8_t data [2]= {activationData.params.i93.afi, activationData.params.i93.dsfid};
-                actBytes.reset(e->NewByteArray(2));
-                e->SetByteArrayRegion(actBytes.get(), 0, 2, (jbyte *) data);
+                actBytes = e->NewByteArray (2);
+                e->SetByteArrayRegion (actBytes, 0, 2, (jbyte *) data);
             }
             break;
 
         default:
             ALOGD ("%s: tech unknown ????", fn);
-            actBytes.reset(e->NewByteArray(0));
+            actBytes = e->NewByteArray (0);
             break;
         }//switch
-        e->SetObjectArrayElement(techActBytes.get(), i, actBytes.get());
+        e->SetObjectArrayElement (techActBytes, i, actBytes);
     } //for: every technology in the array
-    jfieldID f = e->GetFieldID (tag_cls, "mTechActBytes", "[[B");
-    e->SetObjectField(tag, f, techActBytes.get());
+    f = e->GetFieldID (tag_cls, "mTechActBytes", "[[B");
+    e->SetObjectField (tag, f, techActBytes);
 }
 
 
@@ -892,16 +907,17 @@ void NfcTag::fillNativeNfcTagMembers4 (JNIEnv* e, jclass tag_cls, jobject tag, t
 void NfcTag::fillNativeNfcTagMembers5 (JNIEnv* e, jclass tag_cls, jobject tag, tNFA_ACTIVATED& activationData)
 {
     static const char fn [] = "NfcTag::fillNativeNfcTagMembers5";
+    jfieldID f = NULL;
     int len = 0;
-    ScopedLocalRef<jbyteArray> uid(e, NULL);
+    jbyteArray uid = NULL;
 
     switch (mTechParams [0].mode)
     {
     case NFC_DISCOVERY_TYPE_POLL_KOVIO:
         ALOGD ("%s: Kovio", fn);
         len = mTechParams [0].param.pk.uid_len;
-        uid.reset(e->NewByteArray(len));
-        e->SetByteArrayRegion(uid.get(), 0, len,
+        uid = e->NewByteArray (len);
+        e->SetByteArrayRegion (uid, 0, len,
                 (jbyte*) &mTechParams [0].param.pk.uid);
         break;
 
@@ -911,8 +927,8 @@ void NfcTag::fillNativeNfcTagMembers5 (JNIEnv* e, jclass tag_cls, jobject tag, t
     case NFC_DISCOVERY_TYPE_LISTEN_A_ACTIVE:
         ALOGD ("%s: tech A", fn);
         len = mTechParams [0].param.pa.nfcid1_len;
-        uid.reset(e->NewByteArray(len));
-        e->SetByteArrayRegion(uid.get(), 0, len,
+        uid = e->NewByteArray (len);
+        e->SetByteArrayRegion (uid, 0, len,
                 (jbyte*) &mTechParams [0].param.pa.nfcid1);
         break;
 
@@ -921,8 +937,8 @@ void NfcTag::fillNativeNfcTagMembers5 (JNIEnv* e, jclass tag_cls, jobject tag, t
     case NFC_DISCOVERY_TYPE_LISTEN_B:
     case NFC_DISCOVERY_TYPE_LISTEN_B_PRIME:
         ALOGD ("%s: tech B", fn);
-        uid.reset(e->NewByteArray(NFC_NFCID0_MAX_LEN));
-        e->SetByteArrayRegion(uid.get(), 0, NFC_NFCID0_MAX_LEN,
+        uid = e->NewByteArray (NFC_NFCID0_MAX_LEN);
+        e->SetByteArrayRegion (uid, 0, NFC_NFCID0_MAX_LEN,
                 (jbyte*) &mTechParams [0].param.pb.nfcid0);
         break;
 
@@ -931,8 +947,8 @@ void NfcTag::fillNativeNfcTagMembers5 (JNIEnv* e, jclass tag_cls, jobject tag, t
     case NFC_DISCOVERY_TYPE_LISTEN_F:
     case NFC_DISCOVERY_TYPE_LISTEN_F_ACTIVE:
         ALOGD ("%s: tech F", fn);
-        uid.reset(e->NewByteArray(NFC_NFCID2_LEN));
-        e->SetByteArrayRegion(uid.get(), 0, NFC_NFCID2_LEN,
+        uid = e->NewByteArray (NFC_NFCID2_LEN);
+        e->SetByteArrayRegion (uid, 0, NFC_NFCID2_LEN,
                 (jbyte*) &mTechParams [0].param.pf.nfcid2);
         break;
 
@@ -943,18 +959,18 @@ void NfcTag::fillNativeNfcTagMembers5 (JNIEnv* e, jclass tag_cls, jobject tag, t
             jbyte data [I93_UID_BYTE_LEN];  //8 bytes
             for (int i=0; i<I93_UID_BYTE_LEN; ++i) //reverse the ID
                 data[i] = activationData.params.i93.uid [I93_UID_BYTE_LEN - i - 1];
-            uid.reset(e->NewByteArray(I93_UID_BYTE_LEN));
-            e->SetByteArrayRegion(uid.get(), 0, I93_UID_BYTE_LEN, data);
+            uid = e->NewByteArray (I93_UID_BYTE_LEN);
+            e->SetByteArrayRegion (uid, 0, I93_UID_BYTE_LEN, data);
         }
         break;
 
     default:
         ALOGE ("%s: tech unknown ????", fn);
-        uid.reset(e->NewByteArray(0));
+        uid = e->NewByteArray (0);
         break;
-    }
-    jfieldID f = e->GetFieldID(tag_cls, "mUid", "[B");
-    e->SetObjectField(tag, f, uid.get());
+    } //if
+    f = e->GetFieldID(tag_cls, "mUid", "[B");
+    e->SetObjectField(tag, f, uid);
 }
 
 
@@ -1306,3 +1322,4 @@ void NfcTag::connectionEventHandler (UINT8 event, tNFA_CONN_EVT_DATA* data)
         }
     }
 }
+

@@ -15,7 +15,6 @@
  */
 
 #pragma once
-#undef LOG_TAG
 #define LOG_TAG "BrcmNfcJni"
 #include <JNIHelp.h>
 #include <jni.h>
@@ -129,21 +128,6 @@ struct nfc_jni_native_data
    int tHandle;
    int tProtocols[16];
    int handles[16];
-};
-
-
-class ScopedAttach {
- public:
-  ScopedAttach(JavaVM* vm, JNIEnv** env) : vm_(vm) {
-    vm_->AttachCurrentThread(env, NULL);
-  }
-
-  ~ScopedAttach() {
-    vm_->DetachCurrentThread();
-  }
-
- private:
-  JavaVM* vm_;
 };
 
 

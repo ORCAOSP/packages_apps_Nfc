@@ -25,7 +25,6 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.Locale;
 
 /**
  * A HandoverTransfer object represents a set of files
@@ -408,7 +407,7 @@ public class HandoverTransfer implements Handler.Callback,
     File generateMultiplePath(String beamRoot) {
         // Generate a unique directory with the date
         String format = "yyyy-MM-dd";
-        SimpleDateFormat sdf = new SimpleDateFormat(format, Locale.US);
+        SimpleDateFormat sdf = new SimpleDateFormat(format);
         String newPath = beamRoot + "beam-" + sdf.format(new Date());
         File newFile = new File(newPath);
         int count = 0;
